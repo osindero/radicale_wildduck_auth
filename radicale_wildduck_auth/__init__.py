@@ -1,3 +1,4 @@
+import os
 import requests
 from radicale.auth import BaseAuth
 from typing import Tuple, Union
@@ -17,21 +18,22 @@ class Auth(BaseAuth):
     def get_external_login(self, environ: types.WSGIEnviron) -> Union[Tuple[()], Tuple[str, str]]:
         self._environ = environ
         x_access_token = environ.get("HTTP_X_ACCESS_TOKEN")
+        x_target_user = environ.get("HTTP_X_TARGET_USER")
 
         if x_access_token:
-            authenticated_user = self._authenticate_with_token(x_access_token)
+            authenticated_user = self._authenticate_with_token(x_access_token, x_target_user)
             if authenticated_user:
                 return authenticated_user, ""
 
         return None
 
-
     def login(self, login: str, password: str) -> str:
-        logger.debug("Login method called with login: '%s' and password: '%s'", login, password)
+        #logger.debug("Login method called with login: '%s' and password: '%s'", login, password)
         x_access_token = self._environ.get("HTTP_X_ACCESS_TOKEN")
+        x_target_user = self._environ.get("HTTP_X_TARGET_USER")
 
         if x_access_token:
-            authenticated_user = self._authenticate_with_token(x_access_token)
+            authenticated_user = self._authenticate_with_token(x_access_token, x_target_user)
             if authenticated_user:
                 self._environ["REMOTE_USER"] = authenticated_user
                 return authenticated_user
@@ -44,10 +46,8 @@ class Auth(BaseAuth):
 
         return ()
 
-
-
     def _authenticate_with_password(self, user, password):
-        logger.debug("Login attempt by '%s' with password. ", user)
+        #logger.debug("Login attempt by '%s' with password.", user)
         headers = {"X-Access-Token": self.wildduck_api_token}
         try:
             response = requests.post(f"{self.wildduck_api_url}/authenticate", headers=headers, json={
@@ -65,8 +65,29 @@ class Auth(BaseAuth):
             logger.error("Error authenticating with WildDuck: %s", e)
             return False
 
-    def _authenticate_with_token(self, x_access_token):
-        logger.debug("Login attempt with token - '%s'.", x_access_token)
+    def _authenticate_with_token(self, x_access_token, x_target_user):
+        #logger.debug("Login attempt with token - '%s'.", x_access_token)
+
+        # Validate the supplied token if the target user is specified
+        if x_target_user:
+            #logger.debug("Pre-auth check for target user - '%s' with supplied token.", x_target_user)
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {x_access_token}"
+            }
+            preauth_response = requests.post(
+                f"{self.wildduck_api_url}/users/{x_target_user}/preauth",
+                headers=headers,
+                json={"username": x_target_user}
+            )
+            
+            if preauth_response.status_code == 200 and preauth_response.json().get("success"):
+                logger.info("Pre-auth check succeeded for target user '%s'.", x_target_user)
+                return x_target_user
+            else:
+                logger.warning("Pre-auth check failed for target user '%s'.", x_target_user)
+                return False
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.wildduck_api_token}",
